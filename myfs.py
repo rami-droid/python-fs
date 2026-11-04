@@ -76,11 +76,19 @@ def save(f, filename, content):
         filename (str): The name of the file to be saved.
         content (str): The file content to be saved.
     """
+
     num_existing = _get_num_files(f)
-    new_fileno = num_existing + 1
-    _set_num_files(f, new_fileno)
-    
-    if new_fileno >= MAX_FILES:
+    if num_existing >= MAX_FILES:
+        raise NoFreeSpace(f"No free space available, max files: {MAX_FILES}")
+
+    new_fileno = None
+    for fileno in range(1, MAX_FILES + 1):
+        f.seek(HEADER_START + FILE_ENTRY_SIZE * fileno)
+        if f.read(FILE_ENTRY_SIZE) == b'\0' * FILE_ENTRY_SIZE:
+            new_fileno = fileno
+            break
+
+    if new_fileno is None:
         raise NoFreeSpace(f"No free space available, max files: {MAX_FILES}")
 
     # write filename in ftable next free entry, truncate if needed
@@ -90,6 +98,7 @@ def save(f, filename, content):
     # write content to file block, truncate if needed
     f.seek(HEADER_START + FILE_BLOCK_SIZE * new_fileno)
     f.write(content.encode('ascii')[:FILE_BLOCK_SIZE])
+    _set_num_files(f, num_existing + 1)
 
 
 
@@ -106,12 +115,11 @@ def find_fileno(f, filename):
     Returns:
         int: 0-indexed position number
     """
-    N = _get_num_files(f)
-    for pos in range(0, N):
+    for pos in range(0, MAX_FILES):
         f.seek(HEADER_START + FILE_ENTRY_SIZE * (pos+1))
         name = f.read(FILENAME_SIZE)
         name = name.decode("ascii").strip('\0')
-        if name == filename:
+        if name and name == filename:
             return pos
     else:
         raise NoFile(f"File {filename} not found")
