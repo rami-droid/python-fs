@@ -9,6 +9,8 @@ HEADER_START = 0x0
 COUNTER_BYTES = 0x1
 # size of file info entry (filename, ...)
 FILE_ENTRY_SIZE = 0x10
+# size of the file size field in each entry
+FILESIZE_SIZE = 0x2
 # size of a file block (content of a file)
 FILE_BLOCK_SIZE = 0x100
 # max number of files (first block is reserved for metainfo, rest are files)
@@ -16,7 +18,7 @@ MAX_FILES = (TOTAL_SIZE - FILE_BLOCK_SIZE) // FILE_BLOCK_SIZE
 
 MAX_HARD_LINK_FILES = 0 #TODO: Task 4
 
-FILENAME_SIZE = FILE_ENTRY_SIZE #TODO
+FILENAME_SIZE = FILE_ENTRY_SIZE - FILESIZE_SIZE
 
 
 ###### EXCEPTIONS ######
@@ -91,13 +93,17 @@ def save(f, filename, content):
     if new_fileno is None:
         raise NoFreeSpace(f"No free space available, max files: {MAX_FILES}")
 
-    # write filename in ftable next free entry, truncate if needed
-    f.seek(HEADER_START + FILE_ENTRY_SIZE * new_fileno)
-    f.write(filename.encode('ascii')[:FILE_ENTRY_SIZE])
+    entry_start = HEADER_START + FILE_ENTRY_SIZE * new_fileno
+    content_bytes = content.encode('ascii')[:FILE_BLOCK_SIZE]
+
+    # store the filename and byte length 
+    f.seek(entry_start)
+    f.write(filename.encode('ascii')[:FILENAME_SIZE].ljust(FILENAME_SIZE, b'\0'))
+    f.write(len(content_bytes).to_bytes(FILESIZE_SIZE, 'little'))
     
     # write content to file block, truncate if needed
     f.seek(HEADER_START + FILE_BLOCK_SIZE * new_fileno)
-    f.write(content.encode('ascii')[:FILE_BLOCK_SIZE])
+    f.write(content_bytes)
     _set_num_files(f, num_existing + 1)
 
 
@@ -115,11 +121,11 @@ def find_fileno(f, filename):
     Returns:
         int: 0-indexed position number
     """
+    target_name = filename.encode("ascii")[:FILENAME_SIZE].rstrip(b'\0')
     for pos in range(0, MAX_FILES):
         f.seek(HEADER_START + FILE_ENTRY_SIZE * (pos+1))
-        name = f.read(FILENAME_SIZE)
-        name = name.decode("ascii").strip('\0')
-        if name and name == filename:
+        name = f.read(FILENAME_SIZE).rstrip(b'\0')
+        if name and name == target_name:
             return pos
     else:
         raise NoFile(f"File {filename} not found")
@@ -133,8 +139,9 @@ def find_filesize(f, fileno):
         f (file object): The file system
         fileno (int): The file number
     """
-    # Task 2
-    pass
+    f.seek(HEADER_START + FILE_ENTRY_SIZE * (fileno + 1) + FILENAME_SIZE)
+    filesize = f.read(FILESIZE_SIZE)
+    return int.from_bytes(filesize, 'little', signed=False)
 
 
 def load(f, filename):
@@ -148,9 +155,10 @@ def load(f, filename):
     """
     
     fileno = find_fileno(f, filename)
+    filesize = find_filesize(f, fileno)
     f.seek(HEADER_START + FILE_BLOCK_SIZE * (fileno+1))
-    content = f.read(FILE_BLOCK_SIZE)    
-    content = content.decode("ascii").strip('\0')
+    content = f.read(filesize)
+    content = content.decode("ascii")
     
     return content
 
